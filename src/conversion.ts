@@ -22,7 +22,8 @@ function makeMatcher(stripSpacers: string[], digitsRegex: RegExp, base: number):
         if (digitsMatch === null) {
             return null;
         }
-        const digitsSubstring = digitsMatch[1];
+        // concatenate all capture groups
+        const digitsSubstring = digitsMatch.slice(1).join("");
         const parsed = Number.parseInt(digitsSubstring, base);
         if (Number.isNaN(parsed)) {
             return null;
@@ -31,52 +32,58 @@ function makeMatcher(stripSpacers: string[], digitsRegex: RegExp, base: number):
     };
 }
 
+function sign(num: number): string {
+    return (num < 0) ? "-" : "";
+}
+
 const SupportedLanguages: { [language: string]: LanguageDefinition } = {
     python: {
         matchers: [
-            makeMatcher(["_"], /^([0-9]+)$/, 10),
-            makeMatcher(["_"], /^0x([0-9a-fA-F]+)$/, 16),
-            makeMatcher(["_"], /^0b([01]+)$/, 2),
-            makeMatcher(["_"], /^0o([0-7]+)$/, 8),
+            makeMatcher(["_"], /^(-?[0-9]+)$/, 10),
+            makeMatcher(["_"], /^(-?)0x([0-9a-fA-F]+)$/, 16),
+            makeMatcher(["_"], /^(-?)0b([01]+)$/, 2),
+            makeMatcher(["_"], /^(-?)0o([0-7]+)$/, 8),
         ],
         baseOutput(numberValue, base) {
             switch (base) {
-                case 2: return "0b" + numberValue.toString(2);
-                case 8: return "0o" + numberValue.toString(8);
+                case 2: return sign(numberValue) + "0b" + Math.abs(numberValue).toString(2);
+                case 8: return sign(numberValue) + "0o" + Math.abs(numberValue).toString(8);
                 case 10: return numberValue.toString(10);
-                case 16: return "0x" + numberValue.toString(16);
+                case 16: return sign(numberValue) + "0x" + Math.abs(numberValue).toString(16);
                 default: return null;
             }
         },
     },
     cpp: {
         matchers: [
-            makeMatcher(["'"], /^([1-9][0-9]*)$/, 10),
-            makeMatcher(["'"], /^0[xX]([0-9a-fA-F]+)$/, 16),
-            makeMatcher(["'"], /^0[bB]([01]+)$/, 2),
-            makeMatcher(["'"], /^(0[0-7]*)$/, 8),
+            makeMatcher(["'"], /^(-?[1-9][0-9]*)$/, 10),
+            makeMatcher(["'"], /^(-?)0[xX]([0-9a-fA-F]+)$/, 16),
+            makeMatcher(["'"], /^(-?)0[bB]([01]+)$/, 2),
+            makeMatcher(["'"], /^(-?0[0-7]*)$/, 8),
         ],
         baseOutput(numberValue, base) {
             switch (base) {
-                case 2: return "0b" + numberValue.toString(2);
-                case 8: return (numberValue !== 0) ? "0" + numberValue.toString(8) : "0";
+                case 2: return sign(numberValue) + "0b" + Math.abs(numberValue).toString(2);
+                case 8: return (numberValue !== 0)
+                    ? sign(numberValue) + "0" + Math.abs(numberValue).toString(8)
+                    : "0";
                 case 10: return numberValue.toString(10);
-                case 16: return "0x" + numberValue.toString(16);
+                case 16: return sign(numberValue) + "0x" + Math.abs(numberValue).toString(16);
                 default: return null;
             }
         },
     },
     csharp: {
         matchers: [
-            makeMatcher(["_"], /^([0-9]+)$/, 10),
-            makeMatcher(["_"], /^0[xX]([0-9a-fA-F]+)$/, 16),
-            makeMatcher(["_"], /^0[bB]([01]+)$/, 2),
+            makeMatcher(["_"], /^(-?[0-9]+)$/, 10),
+            makeMatcher(["_"], /^(-?)0[xX]([0-9a-fA-F]+)$/, 16),
+            makeMatcher(["_"], /^(-?)0[bB]([01]+)$/, 2),
         ],
         baseOutput(numberValue, base) {
             switch (base) {
-                case 2: return "0b" + numberValue.toString(2);
+                case 2: return sign(numberValue) + "0b" + Math.abs(numberValue).toString(2);
                 case 10: return numberValue.toString(10);
-                case 16: return "0x" + numberValue.toString(16);
+                case 16: return sign(numberValue) + "0x" + Math.abs(numberValue).toString(16);
                 default: return null;
             }
         },
@@ -110,14 +117,21 @@ export async function convertVsCodeSelectionTo(targetBase: number) {
 
     // support multiple selections
     for (const selection of editor.selections) {
-        // always replace the whole word
-        const wordSelection = editor.document.getWordRangeAtPosition(selection.start);
-        if (wordSelection === undefined) {
-            continue;
+        let fullSelection: vscode.Range;
+        if (selection.isEmpty) {
+            // extend to the whole word
+            const wordSelection = editor.document.getWordRangeAtPosition(selection.start);
+            if (wordSelection === undefined) {
+                continue;
+            }
+            fullSelection = wordSelection;
+        } else {
+            // take whatever is selected
+            fullSelection = selection;
         }
 
         // get the text in the selection and try to convert it
-        const selectionText = editor.document.getText(wordSelection);
+        const selectionText = editor.document.getText(fullSelection);
         const converted = convertTo(selectionText, language, targetBase);
         if (converted === null) {
             continue;
@@ -125,7 +139,7 @@ export async function convertVsCodeSelectionTo(targetBase: number) {
 
         // dump the conversion into the document
         await editor.edit(editBuilder => {
-            editBuilder.replace(wordSelection, converted);
+            editBuilder.replace(fullSelection, converted);
         });
     }
 }
